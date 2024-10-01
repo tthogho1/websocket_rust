@@ -1,7 +1,7 @@
 mod view;
+mod handlers; 
 
 use view::render_template;
-
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -9,16 +9,23 @@ use axum::{
     },
     response::IntoResponse,
     routing::get,
+    routing::post,
     routing::get_service,
     Router
 };
+
 use futures::{sink::SinkExt, stream::StreamExt};
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr,  sync::Arc};
 use tokio::sync::broadcast;
 use tower_http::services::ServeDir;
+// use std::net::{IpAddr, Ipv4Addr};
+use dotenv::dotenv;
+use std::env;
+use websocket_rust::create_pool;
+use bb8_redis::RedisConnectionManager;
 
+use crate::handlers::position::position_handler; 
 
-// チャットメッセージを表す構造体
 #[derive(Clone, Debug)]
 struct ChatMessage {
     user_id: String,
@@ -27,24 +34,30 @@ struct ChatMessage {
 
 // アプリケーションの状態
 struct AppState {
+    pool: bb8::Pool<RedisConnectionManager>,
     tx: broadcast::Sender<ChatMessage>,
 }
 
 #[tokio::main]
 async fn main() {
+    dotenv().ok();
+
+    // redis cloudへ接続
+    let redis_url = env::var("REDIS_URL").unwrap().to_string();
+    let port = env::var("PORT").expect("PORT environment variable not set").parse::<u16>().expect("PORT is not a number");
+
+    let pool = create_pool(&redis_url).await.unwrap();
     // ブロードキャストチャンネルを作成
     let (tx, _rx) = broadcast::channel(100);
-    let app_state = Arc::new(AppState { tx });
 
-    // ルーターを設定
+    let app_state = Arc::new(AppState { pool ,tx });
     let app = Router::new()
-        .route("/ws", get(ws_handler))
-        .with_state(app_state);
+    .route("/ws", get(ws_handler))
+    .with_state(Arc::clone(&app_state));
 
-    // ルーターを追加
-    let app = app.route("/", get(hello_handler));
-
-    // 静的ファイルを追加
+    let app = app.route("/", get(move || async move {hello_handler(port).await}));
+    let app = app.route("/position",post(position_handler)).with_state(Arc::clone(&app_state));
+   
     let app = app
         .nest_service("/static", get_service(ServeDir::new("static")).handle_error(
             |error| async move {
@@ -56,8 +69,7 @@ async fn main() {
         ));
 
     // サーバーを起動
-    println!("Server running on http://localhost:3000");
-    let addr= SocketAddr::from(([0, 0, 0, 0], 3000));
+    let addr= SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
@@ -69,8 +81,8 @@ async fn ws_handler(
     ws.on_upgrade(|socket| handle_socket(socket, state))
 }
 
-async fn hello_handler() -> impl IntoResponse {
-    return render_template("test".to_string());
+async fn hello_handler(port : u16) -> impl IntoResponse {
+    return render_template("test".to_string(), port);
 }
 
 async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {

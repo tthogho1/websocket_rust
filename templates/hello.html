@@ -38,7 +38,7 @@
         const messageInput = document.getElementById('messageInput');
         const sendButton = document.getElementById('sendButton');
 
-        const socket = new WebSocket('ws://localhost:3000/ws');
+        const socket = new WebSocket("ws://localhost:{{port}}/ws");
 
         socket.onopen = function(event) {
             appendMessage('System: WebSocket接続が確立されました');

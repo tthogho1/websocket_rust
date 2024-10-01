@@ -6,11 +6,12 @@ use axum::response::IntoResponse;
 #[template(path = "hello.html")]
 struct HelloTemplate<'a> {
     name: &'a str,
+    port: &'a u16
 }
 
-pub fn render_template(data: String) ->  impl IntoResponse {
+pub fn render_template(name: String,port:u16) ->  impl IntoResponse {
     // テンプレートのレンダリングロジック
-    let template = HelloTemplate { name: &data };
+    let template = HelloTemplate { name: &name,port:&port };
     let rendered = template.render().unwrap();
 
     return Html(rendered);
