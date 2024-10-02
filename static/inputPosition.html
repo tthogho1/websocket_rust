@@ -75,7 +75,7 @@
                     latitude: latitude,
                     longitude: longitude
                 };
-
+                textarea.value = '';
                 fetch('/position', {
                     method: 'POST',
                     headers: {
