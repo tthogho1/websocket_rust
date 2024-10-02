@@ -3,10 +3,6 @@ mod handlers;
 
 use view::render_template;
 use axum::{
-    extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
-        State,
-    },
     response::IntoResponse,
     routing::get,
     routing::post,
@@ -14,30 +10,19 @@ use axum::{
     Router
 };
 
-use futures::{sink::SinkExt, stream::StreamExt};
 use std::{net::SocketAddr,  sync::Arc};
 use tokio::sync::broadcast;
 use tower_http::services::ServeDir;
-// use std::net::{IpAddr, Ipv4Addr};
 use dotenv::dotenv;
 use std::env;
 use websocket_rust::create_pool;
-use bb8_redis::RedisConnectionManager;
 
+use crate::handlers::position::getallusers_handler;
 use crate::handlers::position::position_handler; 
-
-#[derive(Clone, Debug)]
-struct ChatMessage {
-    user_id: String,
-    message: String,
-}
+use crate::handlers::websocket::ws_handler;
+use crate::handlers::websocket::AppState;
 
 // アプリケーションの状態
-struct AppState {
-    pool: bb8::Pool<RedisConnectionManager>,
-    tx: broadcast::Sender<ChatMessage>,
-}
-
 #[tokio::main]
 async fn main() {
     dotenv().ok();
@@ -47,17 +32,15 @@ async fn main() {
     let port = env::var("PORT").expect("PORT environment variable not set").parse::<u16>().expect("PORT is not a number");
 
     let pool = create_pool(&redis_url).await.unwrap();
-    // ブロードキャストチャンネルを作成
     let (tx, _rx) = broadcast::channel(100);
-
     let app_state = Arc::new(AppState { pool ,tx });
-    let app = Router::new()
-    .route("/ws", get(ws_handler))
-    .with_state(Arc::clone(&app_state));
 
+    let app = Router::new()
+        .route("/ws", get(ws_handler))
+        .with_state(Arc::clone(&app_state));
     let app = app.route("/", get(move || async move {hello_handler(port).await}));
     let app = app.route("/position",post(position_handler)).with_state(Arc::clone(&app_state));
-   
+    let app = app.route("/users",post(getallusers_handler)).with_state(Arc::clone(&app_state));
     let app = app
         .nest_service("/static", get_service(ServeDir::new("static")).handle_error(
             |error| async move {
@@ -74,55 +57,6 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
-    ws.on_upgrade(|socket| handle_socket(socket, state))
-}
-
 async fn hello_handler(port : u16) -> impl IntoResponse {
     return render_template("test".to_string(), port);
-}
-
-async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
-    let (mut sender, mut receiver) = socket.split();
-
-    // ユーザーIDを生成（本番環境では適切な認証を行うべきです）
-    let user_id = uuid::Uuid::new_v4().to_string();
-    let user_id_clone = user_id.clone();
-
-    // ブロードキャストチャンネルの受信機を取得
-    let mut rx = state.tx.subscribe();
-
-    // 受信したメッセージをブロードキャストするタスク
-    let mut send_task = tokio::spawn(async move {
-        while let Ok(msg) = rx.recv().await {
-            // 自分自身のメッセージは送信しない
-          //  if msg.user_id != user_id {
-                let _ = sender
-                    .send(Message::Text(format!("{}: {}", msg.user_id, msg.message)))
-                    .await;
-          //  }
-        }
-    });
-
-    // クライアントからのメッセージを処理するタスク
-    let mut recv_task = tokio::spawn(async move {
-        while let Some(Ok(Message::Text(text))) = receiver.next().await {
-            // 受信したメッセージをブロードキャスト
-            let _ = state.tx.send(ChatMessage {
-                user_id: user_id.clone(),
-                message: text,
-            });
-        }
-    });
-
-    // どちらかのタスクが終了するまで待機
-    tokio::select! {
-        _ = (&mut send_task) => recv_task.abort(),
-        _ = (&mut recv_task) => send_task.abort(),
-    };
-
-    println!("WebSocket connection closed: {}", user_id_clone);
 }

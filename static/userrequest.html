@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ユーザーPOSTリクエストデモ</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+        }
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        button {
+            background-color: #4CAF50;
+            border: none;
+            color: white;
+            padding: 15px 32px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 4px 2px;
+            cursor: pointer;
+        }
+        input, textarea {
+            width: 100%;
+            padding: 12px 20px;
+            margin: 8px 0;
+            display: inline-block;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        textarea {
+            height: 100px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <input type="text" id="userNameInput" placeholder="ユーザー名を入力">
+        <button id="sendButton">送信</button>
+        <textarea id="responseArea" readonly></textarea>
+    </div>
+
+    <script>
+        document.getElementById('sendButton').addEventListener('click', function() {
+            const userName = document.getElementById('userNameInput').value;
+            
+            fetch('/users', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    name: userName
+                })
+            })
+            .then(response => response.text())
+            .then(data => {
+                document.getElementById('responseArea').value = data;
+            })
+            .catch((error) => {
+                console.error('Error:', error);
+                document.getElementById('responseArea').value = 'エラーが発生しました: ' + error;
+            });
+        });
+    </script>
+</body>
+</html>
