@@ -32,12 +32,17 @@ impl AppState {
     }
 }
 
+#[derive(Deserialize, Serialize)]
+pub struct Location {
+    lat: f64,
+    lng: f64,
+}
+
 
 #[derive(Deserialize, Serialize)]
 pub struct UserData {
     name: String,
-    latitude: f64,
-    longitude: f64,
+    location: Location
 }
 
 #[derive(Serialize)]
@@ -49,7 +54,7 @@ pub async fn position_handler(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<UserData>,
 ) -> impl IntoResponse {
-    println!("{}: {}, {}", payload.name, payload.latitude, payload.longitude);
+    println!("{}: {}, {}", payload.name, payload.location.lat, payload.location.lng);
     let key_name = payload.name.clone();
     let json_string = serde_json::to_string(&payload).unwrap();
     

@@ -28,48 +28,71 @@
     </style>
 </head>
 <body>
-    <h1>WebSocket Chat</h1>
-    <div id="chatBox"></div>
-    <input type="text" id="messageInput" placeholder="メッセージを入力">
-    <button id="sendButton">送信</button>
+    <h1 id="title">WebSocket Chat</h1>
+    <input type="text" id="userNameInput" placeholder="Enter User Name">
+    <button id="connectButton">Connect</button>
+    <input type="text" id="toNameInput" placeholder="Enter Send User">
+    <div id="chatBox" style="margin-top: 5px"></div>
+    <input type="text" id="messageInput" placeholder="Please enter message">
+    <button id="sendButton">Send</button>
 
     <script>
         const chatBox = document.getElementById('chatBox');
         const messageInput = document.getElementById('messageInput');
         const sendButton = document.getElementById('sendButton');
 
-        const socket = new WebSocket("ws://localhost:{{port}}/ws");
+        const userNameInput = document.getElementById('userNameInput');
+        const toNameInput = document.getElementById('toNameInput');
+        const connectButton = document.getElementById('connectButton');
 
-        socket.onopen = function(event) {
-            appendMessage('System: WebSocket接続が確立されました');
+        connectButton.onclick = function() {
+            const name = userNameInput.value;
+
+            if (!name) {
+                alert('Input User Name');
+                return;
+            }
+
+            document.getElementById('title').textContent += `  /  USER: ${name}`
+
+            const socket = new WebSocket(`ws://localhost:{{port}}/ws?name=${name}`);
+            socket.onopen = function(event) {
+                appendMessage('System: Establish WebSocket connection');
+            };
+    
+            socket.onmessage = function(event) {
+                appendMessage(`Receive: ${event.data}`);
+            };
+    
+            socket.onclose = function(event) {
+                appendMessage('System: WebSocket connection is closed');
+            };
+    
+            sendButton.onclick = function() {
+                const message = messageInput.value;
+                const toName = toNameInput.value;
+
+                if (message) {
+                    const messageObject = {
+                        user_id : name,
+                        to_id : toName,
+                        message: message
+                    };
+
+                    socket.send(JSON.stringify(messageObject));
+                    appendMessage(`Send: ${message}`);
+                    messageInput.value = '';
+                }
+            };
+    
         };
 
-        socket.onmessage = function(event) {
-            appendMessage(`受信: ${event.data}`);
-        };
-
-        socket.onclose = function(event) {
-            appendMessage('System: WebSocket接続が閉じられました');
-        };
-
-        sendButton.onclick = function() {
-            sendMessage();
-        };
 
         messageInput.onkeypress = function(event) {
             if (event.key === 'Enter') {
                 sendMessage();
             }
         };
-
-        function sendMessage() {
-            const message = messageInput.value;
-            if (message) {
-                socket.send(message);
-                appendMessage(`送信: ${message}`);
-                messageInput.value = '';
-            }
-        }
 
         function appendMessage(message) {
             const messageElement = document.createElement('div');

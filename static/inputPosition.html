@@ -72,8 +72,10 @@
                 const username = document.getElementById('user-box').value;
                 const data = {
                     name:username,
-                    latitude: latitude,
-                    longitude: longitude
+                    location:{
+                        lat: latitude,
+                        lng: longitude
+                    }
                 };
                 textarea.value = '';
                 fetch('/position', {
