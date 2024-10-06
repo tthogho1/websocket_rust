@@ -38,7 +38,6 @@ pub struct Location {
     lng: f64,
 }
 
-
 #[derive(Deserialize, Serialize)]
 pub struct UserData {
     name: String,
@@ -63,6 +62,7 @@ pub async fn position_handler(
 
     match result {
         Ok(_) => {
+            println!("Data stored successfully {}", key_name);
             return Json(PositionResponse { message: "OK".to_string() }).into_response();
         }
         Err(e) => {
@@ -134,6 +134,6 @@ pub async fn getallusers_handler(
             }
         }
     }
-
+    println!("return {} users", users.len());
     Json(UserListResponse { users }).into_response()
 }
