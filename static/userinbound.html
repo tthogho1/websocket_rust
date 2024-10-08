@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>位置と半径の入力フォーム</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 500px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        form {
+            display: flex;
+            flex-direction: column;
+        }
+        label, input, textarea, button {
+            margin-bottom: 10px;
+        }
+        input, textarea {
+            padding: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>位置と半径の入力</h1>
+    <form id="locationForm">
+        <label for="latitude">緯度:</label>
+        <input type="number" id="latitude" step="any" required>
+
+        <label for="longitude">経度:</label>
+        <input type="number" id="longitude" step="any" required>
+
+        <label for="radius">半径 (m):</label>
+        <input type="number" id="radius" required>
+
+        <button type="submit">送信</button>
+    </form>
+
+    <label for="result">結果:</label>
+    <textarea id="result" rows="10" readonly></textarea>
+
+    <script>
+        document.getElementById('locationForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+
+            const latitude = document.getElementById('latitude').value;
+            const longitude = document.getElementById('longitude').value;
+            const radius = document.getElementById('radius').value;
+
+            const data = {
+                location:{
+                    lat: parseFloat(latitude),
+                    lng: parseFloat(longitude),    
+                },
+                radius: parseInt(radius)
+            };
+
+            fetch('/usersinbounds', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data)
+            })
+            .then(response => response.json())
+            .then(result => {
+                document.getElementById('result').value = JSON.stringify(result, null, 2);
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                document.getElementById('result').value = 'エラーが発生しました。コンソールを確認してください。';
+            });
+        });
+    </script>
+</body>
+</html>

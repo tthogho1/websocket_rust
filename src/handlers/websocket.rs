@@ -1,28 +1,19 @@
 use axum::{
-    response::IntoResponse,
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
-        State,
-        Query
-    }
+        ws::{Message, WebSocket, WebSocketUpgrade}, Query, State
+    }, 
+    response::IntoResponse
 };
-use std::sync::Arc;
-use bb8_redis::RedisConnectionManager;
-use tokio::sync::broadcast;
+
 use futures::{sink::SinkExt, stream::StreamExt};
 use serde::Deserialize;
+use std::sync::Arc;
 
-pub struct AppState {
-    pub pool: bb8::Pool<RedisConnectionManager>,
-    pub tx: broadcast::Sender<ChatMessage>,
-}
+use websocket_rust::AppState;
+use websocket_rust::ChatMessage;
+use websocket_rust::get_app_state;
 
-#[derive(Clone, Debug,Deserialize)]
-pub struct ChatMessage {
-    pub user_id: String,
-    pub to_id: String,
-    pub message: String,
-}
+use crate::handlers::position::delete_user;
 
 
 #[derive(Deserialize)]
@@ -45,6 +36,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, name: String) {
 
     let user_id = name;
     let user_id_clone = user_id.clone();
+    let delete_id = user_id.clone();
 
     // ブロードキャストチャンネルの受信機を取得
     let mut rx = state.tx.subscribe();
@@ -77,5 +69,11 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, name: String) {
         _ = (&mut recv_task) => send_task.abort(),
     };
 
-    println!("WebSocket connection closed: ");
+    let delete_id_clone = delete_id.clone();
+    println!("WebSocket connection closed {}", delete_id_clone);
+
+    // delete user for redis if exists
+    let app_state = Arc::clone(get_app_state());
+    let _ = delete_user(State(app_state), delete_id).await.unwrap();
+    
 }
