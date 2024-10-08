@@ -16,11 +16,13 @@ use tower_http::services::ServeDir;
 use dotenv::dotenv;
 use std::env;
 use websocket_rust::create_pool;
+use websocket_rust::init_app_state;
+use websocket_rust::get_app_state;
 
 use crate::handlers::position::getallusers_handler;
+use crate::handlers::position::get_users_in_bounds;
 use crate::handlers::position::position_handler; 
 use crate::handlers::websocket::ws_handler;
-use crate::handlers::websocket::AppState;
 
 // アプリケーションの状態
 #[tokio::main]
@@ -33,14 +35,18 @@ async fn main() {
 
     let pool = create_pool(&redis_url).await.unwrap();
     let (tx, _rx) = broadcast::channel(100);
-    let app_state = Arc::new(AppState { pool ,tx });
+    init_app_state(pool, tx);
+    let app_state = get_app_state();
 
     let app = Router::new()
         .route("/ws", get(ws_handler))
         .with_state(Arc::clone(&app_state));
     let app = app.route("/", get(move || async move {hello_handler(port).await}));
     let app = app.route("/position",post(position_handler)).with_state(Arc::clone(&app_state));
-    let app = app.route("/users",post(getallusers_handler)).with_state(Arc::clone(&app_state));
+    let app: Router<Arc<websocket_rust::AppState>> = app.route("/users",post(getallusers_handler)).with_state(Arc::clone(&app_state));
+    let app = app.route("/usersinbounds",post(get_users_in_bounds)).with_state(Arc::clone(&app_state));
+
+    // 静的ファイルを提供
     let app = app
         .nest_service("/static", get_service(ServeDir::new("static")).handle_error(
             |error| async move {
