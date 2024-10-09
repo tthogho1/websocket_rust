@@ -41,14 +41,14 @@ async fn main() {
     let app = Router::new()
         .route("/ws", get(ws_handler))
         .with_state(Arc::clone(&app_state));
-    let app = app.route("/", get(move || async move {hello_handler(port).await}));
+    let app = app.route("/Chat", get(move || async move {hello_handler(port).await}));
     let app = app.route("/position",post(position_handler)).with_state(Arc::clone(&app_state));
     let app: Router<Arc<websocket_rust::AppState>> = app.route("/users",post(getallusers_handler)).with_state(Arc::clone(&app_state));
     let app = app.route("/usersinbounds",post(get_users_in_bounds)).with_state(Arc::clone(&app_state));
 
     // 静的ファイルを提供
     let app = app
-        .nest_service("/static", get_service(ServeDir::new("static")).handle_error(
+        .nest_service("/", get_service(ServeDir::new("static")).handle_error(
             |error| async move {
                 (
                     axum::http::StatusCode::INTERNAL_SERVER_ERROR,
