@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- link rel="stylesheet" href="./style.css" -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WebRTC ビデオチャット</title>
+  </head>
+  <body>
+    <input type="text" id="user_id" placeholder="Enter User ID" value="" />
+    <input type="text" id="to_id" placeholder="Enter Send ID" value="" />
+    <button id="connectButton">Connect</button>
+    <div id="app">
+      <div class="videoContainer">
+        <div>
+          Local
+          <video id="local-video" autoplay playsinline></video>
+        </div>
+        <div>
+          Remote
+          <video id="remote-video" autoplay playsinline></video>
+        </div>
+      </div>
+      <div class="buttonWrapper">
+        <div class="buttonContainer">
+          <p><b> offer側の操作</b></p>
+          <button id="createOfferButton">Offerを生成</button>
+        </div>
+        <div class="buttonContainer">
+          <p><b> close</b></p>
+          <button id="closeButton">close</button>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="./js/main.js"></script>
+  </body>
+</html>

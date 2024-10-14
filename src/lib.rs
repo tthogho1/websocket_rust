@@ -1,6 +1,7 @@
 use bb8_redis::{bb8, RedisConnectionManager};
 
 use serde :: Deserialize;
+use serde :: Serialize;
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::Sender;
 use std::sync::Arc;
@@ -14,11 +15,49 @@ pub struct AppState {
     pub tx: broadcast::Sender<ChatMessage>,
 }
 
-#[derive(Clone, Debug,Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ChatMessage {
     pub user_id: String,
     pub to_id: String,
-    pub message: String,
+    pub message: MessageContent,
+}
+
+#[derive(Clone, Debug,Deserialize , Serialize)]
+#[serde(untagged)]
+pub enum MessageContent {
+    Text(String),
+    Sdp(Sdp),
+    Ice(Ice),
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Sdp {
+    pub r#type: String,
+    pub sdp: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Ice{
+    pub r#type: String,
+    pub candidate: Candidate,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[allow(non_snake_case)]
+pub struct Candidate {
+    pub candidate: String,
+    pub sdpMid: String,
+    pub sdpMLineIndex: u32,
+}
+
+impl std::fmt::Display for MessageContent {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            MessageContent::Text(text) => write!(f, "{}", text),
+            MessageContent::Sdp(sdp) => write!(f, "Sdp(type: {}, sdp: {})", sdp.r#type, sdp.sdp),
+            MessageContent::Ice(ice) => write!(f, "Ice(type: {}, candidate: {})", ice.r#type, ice.candidate.candidate),
+        }
+    }
 }
 
 impl AppState {

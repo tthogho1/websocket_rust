@@ -55,7 +55,7 @@
 
             document.getElementById('title').textContent += `  /  USER: ${name}`
 
-            const socket = new WebSocket(`ws://localhost:{{port}}/ws?name=${name}`);
+            const socket = new WebSocket(`{{ws_server}}?name=${name}`);
             socket.onopen = function(event) {
                 appendMessage('System: Establish WebSocket connection');
             };
