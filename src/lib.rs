@@ -101,3 +101,60 @@ pub async fn get_connection(pool: &bb8::Pool<RedisConnectionManager>) -> Result<
     let conn = pool.get().await?;
     Ok(conn)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockall::predicate::*;
+    use mockall::mock;
+    use dotenv::dotenv;
+    use std::env;
+
+    mock! {
+        RedisConnectionManager {}
+        impl Clone for RedisConnectionManager {
+            fn clone(&self) -> Self;
+        }
+    }
+
+    mock! {
+        Pool<RedisConnectionManager> {}
+    }
+
+    #[tokio::test]
+    async fn test_create_pool_success() {
+        dotenv().ok();
+        let redis_url = env::var("REDIS_URL").expect("REDIS_URL must be set in .env file");
+
+        let result = create_pool(&redis_url).await;
+
+        // 結果を検証
+        assert!(result.is_ok());
+
+        let pool = result.unwrap();
+        let result_con  = get_connection(&pool).await;
+
+        assert!(result_con.is_ok());
+
+        let _con = result_con.unwrap();
+
+        let state = pool.state();
+        let count = state.connections;
+
+        // 結果を検証
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_create_pool_failure() {
+        let redis_url = "invalid_url";
+
+        // テスト実行
+        let result = create_pool(redis_url).await;
+
+        assert!(result.is_err());
+    }
+}
+
+
+
