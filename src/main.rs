@@ -32,6 +32,8 @@ async fn main() {
     // redis cloudへ接続
     let redis_url = env::var("REDIS_URL").unwrap().to_string();
     let port = env::var("PORT").expect("PORT environment variable not set").parse::<u16>().expect("PORT is not a number");
+    let ws_server = env::var("WS_SERVER").unwrap().to_string();
+
 
     let pool = create_pool(&redis_url).await.unwrap();
     let (tx, _rx) = broadcast::channel(100);
@@ -41,7 +43,7 @@ async fn main() {
     let app = Router::new()
         .route("/ws", get(ws_handler))
         .with_state(Arc::clone(&app_state));
-    let app = app.route("/Chat", get(move || async move {hello_handler(port).await}));
+    let app = app.route("/Chat", get(move || async move {hello_handler(ws_server).await}));
     let app = app.route("/position",post(position_handler)).with_state(Arc::clone(&app_state));
     let app: Router<Arc<websocket_rust::AppState>> = app.route("/users",post(getallusers_handler)).with_state(Arc::clone(&app_state));
     let app = app.route("/usersinbounds",post(get_users_in_bounds)).with_state(Arc::clone(&app_state));
@@ -63,6 +65,6 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn hello_handler(port : u16) -> impl IntoResponse {
-    return render_template("test".to_string(), port);
+async fn hello_handler(ws_server: String) -> impl IntoResponse {
+    return render_template("test".to_string(), ws_server);
 }

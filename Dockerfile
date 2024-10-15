@@ -25,5 +25,8 @@ FROM debian:buster-slim
 RUN apt-get update && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/websocket_rust /usr/local/bin/websocket_rust
+COPY --from=builder /app/static /usr/local/bin/static
+
+EXPOSE 8000
 
 CMD ["websocket_rust"]

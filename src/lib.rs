@@ -1,6 +1,7 @@
 use bb8_redis::{bb8, RedisConnectionManager};
 
 use serde :: Deserialize;
+use serde :: Serialize;
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::Sender;
 use std::sync::Arc;
@@ -14,11 +15,49 @@ pub struct AppState {
     pub tx: broadcast::Sender<ChatMessage>,
 }
 
-#[derive(Clone, Debug,Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ChatMessage {
     pub user_id: String,
     pub to_id: String,
-    pub message: String,
+    pub message: MessageContent,
+}
+
+#[derive(Clone, Debug,Deserialize , Serialize)]
+#[serde(untagged)]
+pub enum MessageContent {
+    Text(String),
+    Sdp(Sdp),
+    Ice(Ice),
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Sdp {
+    pub r#type: String,
+    pub sdp: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Ice{
+    pub r#type: String,
+    pub candidate: Candidate,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[allow(non_snake_case)]
+pub struct Candidate {
+    pub candidate: String,
+    pub sdpMid: String,
+    pub sdpMLineIndex: u32,
+}
+
+impl std::fmt::Display for MessageContent {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            MessageContent::Text(text) => write!(f, "{}", text),
+            MessageContent::Sdp(sdp) => write!(f, "Sdp(type: {}, sdp: {})", sdp.r#type, sdp.sdp),
+            MessageContent::Ice(ice) => write!(f, "Ice(type: {}, candidate: {})", ice.r#type, ice.candidate.candidate),
+        }
+    }
 }
 
 impl AppState {
@@ -62,3 +101,60 @@ pub async fn get_connection(pool: &bb8::Pool<RedisConnectionManager>) -> Result<
     let conn = pool.get().await?;
     Ok(conn)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockall::predicate::*;
+    use mockall::mock;
+    use dotenv::dotenv;
+    use std::env;
+
+    mock! {
+        RedisConnectionManager {}
+        impl Clone for RedisConnectionManager {
+            fn clone(&self) -> Self;
+        }
+    }
+
+    mock! {
+        Pool<RedisConnectionManager> {}
+    }
+
+    #[tokio::test]
+    async fn test_create_pool_success() {
+        dotenv().ok();
+        let redis_url = env::var("REDIS_URL").expect("REDIS_URL must be set in .env file");
+
+        let result = create_pool(&redis_url).await;
+
+        // 結果を検証
+        assert!(result.is_ok());
+
+        let pool = result.unwrap();
+        let result_con  = get_connection(&pool).await;
+
+        assert!(result_con.is_ok());
+
+        let _con = result_con.unwrap();
+
+        let state = pool.state();
+        let count = state.connections;
+
+        // 結果を検証
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_create_pool_failure() {
+        let redis_url = "invalid_url";
+
+        // テスト実行
+        let result = create_pool(redis_url).await;
+
+        assert!(result.is_err());
+    }
+}
+
+
+

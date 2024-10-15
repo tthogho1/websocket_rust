@@ -12,6 +12,7 @@ use std::sync::Arc;
 use websocket_rust::AppState;
 use websocket_rust::ChatMessage;
 use websocket_rust::get_app_state;
+use websocket_rust::MessageContent;
 
 use crate::handlers::position::delete_user;
 
@@ -41,14 +42,22 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, name: String) {
     // ブロードキャストチャンネルの受信機を取得
     let mut rx = state.tx.subscribe();
 
-    // 受信したメッセージをブロードキャストするタスク
     let mut send_task = tokio::spawn(async move {
         while let Ok(msg) = rx.recv().await {
-            if msg.to_id.is_empty() || (msg.to_id == user_id_clone) {
+            if !msg.to_id.is_empty(){ 
+                if msg.to_id == user_id_clone {
+                    println!("{}: {}", msg.user_id, msg.message);
+                    let json_string = serde_json::to_string(&msg).unwrap();
+                    let _ = sender
+                            .send(Message::Text(json_string))
+                            .await;                        
+                }
+            }else{
+                let json_string = serde_json::to_string(&msg).unwrap();
                 let _ = sender
-                .send(Message::Text(format!("{}: {}", msg.user_id, msg.message)))
-                .await;                
-            }
+                .send(Message::Text(json_string))
+                .await; 
+            } 
         }
     });
 
