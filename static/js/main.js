@@ -6,20 +6,39 @@ const configuration = {
     // 必要に応じてTURNサーバーも追加
   ]
 };
+const selectElement = document.getElementById('userselect');
+const usersbtn = document.getElementById('users');
 
 let socket ;
-let pc ;
+let pc = null;
 let candidates = [];
 let stream;
 let remoteStream;
 //const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
 
 button.addEventListener('click', async () => {
+  const currentUrl = window.location.href;
+  // URLオブジェクトを作成
+  const url = new URL(currentUrl);
+  
+  // プロトコルを判定（https -> wss, http -> ws）
+  const wsProtocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  
+  // ホスト名を取得
+  const hostname = url.hostname;
+
+  // WebSocketのURLを構築
   const userId = document.getElementById('user_id').value;
-  socket = new WebSocket(`ws://localhost:8000/ws?name=${userId}`);
+  const wsUrl = `${wsProtocol}//${hostname}/ws?name=${userId}`;
+
+  socket = new WebSocket(wsUrl);
 
   socket.onopen = () => {
     console.log('WebSocket接続が確立しました');
+    const textarea = document.getElementById('textarea');
+    textarea.value += 'WebSocket接続が確立しました';
+
+    registerUser(userId, 10, 10);
   };
     
   socket.onmessage = async (event) => {
@@ -34,6 +53,11 @@ button.addEventListener('click', async () => {
     const data = jsondata.message;
     switch(data.type) {
       case 'offer':
+        const user_id = jsondata.user_id;
+        if (!confirm(`${user_id}からの接続を受け付けますか?`)) {
+           return; 
+        } 
+        document.getElementById('to_id').value = user_id;
         await setupAndRespondToSdp(data.sdp);
         break;
       case 'answer':
@@ -50,6 +74,11 @@ button.addEventListener('click', async () => {
         }
         break;
       case 'ice':
+
+        if (pc == null){
+          console.log('pc is null');
+          return;
+        }
         await pc.addIceCandidate(data.candidate).then(()=>
           {
             console.log('add ice candidate from server')
@@ -60,8 +89,32 @@ button.addEventListener('click', async () => {
         break;
     }
   };
+
 });
 
+usersbtn.addEventListener('click', async () => {
+  const userName = "";
+
+  fetch('/users', {
+    method: 'POST',
+    headers: {
+        'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+        name: userName
+    })
+  })
+  .then(response => response.json())
+  .then(data => {
+    const users = data.users;
+    users.forEach((user) => {
+      addOption(user.name);
+    })
+  })
+  .catch((error) => {
+      console.error('Error:', error);
+  });
+});
 
 async function setupAndRespondToSdp(sdpMessage) {
   pc = new RTCPeerConnection(configuration);
@@ -132,58 +185,29 @@ async function setupAndRespondToSdp(sdpMessage) {
   console.log("send answer");
   socket.send(JSON.stringify(messageObject));
 
+  monitorConnection(pc);
+
+}
+
+function monitorConnection(pc){
+  const textarea = document.getElementById('textarea');
+
   // 接続状態の監視
   pc.onconnectionstatechange = () => {
     console.log('connection state change', pc.connectionState);
+    textarea.value += `connection state change  ${pc.connectionState}`;
   };
 
   pc.oniceconnectionstatechange = () => {
     console.log('ICE connection state:', pc.iceConnectionState);
+    textarea.value += `ICE connection state: ${pc.iceConnectionState}`;
   };
+
   pc.onsignalingstatechange = () => {
     console.log('signaling state:', pc.signalingState);
+    textarea.value += `signaling state: ${pc.signalingState}`;
   }; 
 }
-
-// UI要素（ビデオ要素など）を追加してください
-document.addEventListener('DOMContentLoaded', () => {
-  // UIの初期化
-  const offerButton = document.getElementById('createOfferButton');
-  offerButton.addEventListener('click', async () => {
-    await createAndSendOffer();
-  });
-
-/*  const candidateSendButton = document.getElementById('sendCandidateButton');
-  candidateSendButton.addEventListener('click', async () => {
-    console.log('send candidate');
-
-    candidates.forEach(candidate => {
-      const messageObject = {
-        user_id : document.getElementById('user_id').value,
-        to_id : document.getElementById('to_id').value,
-        message: { type: 'ice', candidate: candidate }
-      }
-      socket.send(JSON.stringify(messageObject));
-    }) 
-  }); */
-
-  const closeButton = document.getElementById('closeButton');
-  closeButton.addEventListener('click', () => {
-    console.log('close');
-    pc.close();
-    pc = null;
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
-      stream = null;
-
-    }
-    if (remoteStream) {
-      remoteStream.getTracks().forEach(track => track.stop());
-      remoteStream = null;
-    }
-  });
-
-});
 
 
 async function createAndSendOffer() {
@@ -242,20 +266,76 @@ async function createAndSendOffer() {
     };
     socket.send(JSON.stringify(messageObject));
 
-    pc.onconnectionstatechange = () => {
-      console.log('connection state change',pc.connectionState);
-    };
-
-    pc.oniceconnectionstatechange = () => {
-      console.log('ICE connection state:', pc.iceConnectionState);
-    };
-
-    pc.onsignalingstatechange = () => {
-      console.log('signaling state:', pc.signalingState);
-    };
+    monitorConnection(pc);
 
     return pc;
   } catch (error) {
     console.error('オファーの作成中にエラーが発生しました:', error);
   }
 }
+
+
+// UI要素（ビデオ要素など）を追加してください
+document.addEventListener('DOMContentLoaded', () => {
+  // pc = new RTCPeerConnection(configuration);
+
+  // UIの初期化
+  const offerButton = document.getElementById('createOfferButton');
+  offerButton.addEventListener('click', async () => {
+    await createAndSendOffer();
+  });
+
+  const closeButton = document.getElementById('closeButton');
+  closeButton.addEventListener('click', () => {
+    console.log('close');
+    pc.close();
+    pc = null;
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+      stream = null;
+
+    }
+    if (remoteStream) {
+      remoteStream.getTracks().forEach(track => track.stop());
+      remoteStream = null;
+    }
+  });
+
+  selectElement.onchange = () => {
+    const selectedValue = selectElement.value;
+    document.getElementById('to_id').value = selectedValue;
+  };
+
+});
+
+
+function registerUser(username, latitude, longitude) {
+  const data = {
+    name:username,
+    location:{
+        lat: latitude,
+        lng: longitude
+    }
+  };
+
+  fetch('/position', {
+      method: 'POST',
+      headers: {
+          'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data)
+  })
+  .then(response => response.json())
+  .then(result => {
+      textarea.value = JSON.stringify(result, null, 2);
+  })
+  .catch(error => {
+      textarea.value = '送信エラー: ' + error.message;
+  });
+}
+
+// optionを追加する関数
+function addOption(text) {
+  const option = new Option(text, text);
+  selectElement.add(option);
+};

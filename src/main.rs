@@ -19,10 +19,13 @@ use websocket_rust::create_pool;
 use websocket_rust::init_app_state;
 use websocket_rust::get_app_state;
 
+
 use crate::handlers::position::getallusers_handler;
 use crate::handlers::position::get_users_in_bounds;
 use crate::handlers::position::position_handler; 
 use crate::handlers::websocket::ws_handler;
+use crate::handlers::websocket::redis_listener;
+
 
 // アプリケーションの状態
 #[tokio::main]
@@ -34,9 +37,9 @@ async fn main() {
     let port = env::var("PORT").expect("PORT environment variable not set").parse::<u16>().expect("PORT is not a number");
     let ws_server = env::var("WS_SERVER").unwrap().to_string();
 
-
     let pool = create_pool(&redis_url).await.unwrap();
     let (tx, _rx) = broadcast::channel(100);
+
     init_app_state(pool, tx);
     let app_state = get_app_state();
 
@@ -59,10 +62,14 @@ async fn main() {
             },
         ));
 
+    //tokio::spawn(async {
+    //    redis_listener().await;
+    //});    
     // サーバーを起動
     let addr= SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
+
 }
 
 async fn hello_handler(ws_server: String) -> impl IntoResponse {

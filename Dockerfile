@@ -1,4 +1,4 @@
-FROM rust:1.70-slim-buster AS builder
+FROM rust:1.75-slim-buster AS builder
 
 WORKDIR /app
 
@@ -29,4 +29,5 @@ COPY --from=builder /app/static /usr/local/bin/static
 
 EXPOSE 8000
 
+WORKDIR /usr/local/bin
 CMD ["websocket_rust"]

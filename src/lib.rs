@@ -4,11 +4,17 @@ use serde :: Deserialize;
 use serde :: Serialize;
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::Sender;
+// use core::error;
 use std::sync::Arc;
 use once_cell::sync::OnceCell;
 use bb8::PooledConnection;
 use axum::http::StatusCode;
 use axum::Json;
+use redis::{AsyncCommands, RedisError};
+use std::time::Duration;
+//use redis::aio::MultiplexedConnection;
+
+
 
 pub struct AppState {
     pub pool: bb8::Pool<RedisConnectionManager>,
@@ -81,7 +87,7 @@ impl AppState {
 static APP_STATE: OnceCell<Arc<AppState>> = OnceCell::new();
 
 pub fn init_app_state(pool: bb8::Pool<RedisConnectionManager>, tx: Sender<ChatMessage>) {
-    let _ = APP_STATE.set(Arc::new(AppState { pool, tx }));
+    let _ = APP_STATE.set(Arc::new(AppState { pool, tx  }));
 }
 
 pub fn get_app_state() -> &'static Arc<AppState> {
@@ -91,15 +97,82 @@ pub fn get_app_state() -> &'static Arc<AppState> {
 pub async fn create_pool(redis_url: &str) -> Result<bb8::Pool<RedisConnectionManager>, Box<dyn std::error::Error>> {
     let manager = RedisConnectionManager::new(redis_url)?;
     let pool = bb8::Pool::builder()
+        .connection_timeout(Duration::from_secs(60))
         .max_size(15)
         .build(manager)
         .await?;
+    
     Ok(pool)
 }
 
 pub async fn get_connection(pool: &bb8::Pool<RedisConnectionManager>) -> Result<bb8::PooledConnection<'_, RedisConnectionManager>, Box<dyn std::error::Error>> {
     let conn = pool.get().await?;
     Ok(conn)
+}
+
+async fn publish(pool: &bb8::Pool<RedisConnectionManager>, channel: &str, message: &str) -> redis::RedisResult<()> {
+    let mut conn = pool.get().await.unwrap();
+    conn.publish(channel, message).await
+}
+
+
+fn connect_to_redis(redis_url: &str) -> Result<redis::Connection, RedisError> {
+    let client = redis::Client::open(redis_url)?;
+    let con = client.get_connection()?;
+    Ok(con)
+}
+
+
+fn subscribe_channel(channel: &str,redis_url: &str) -> redis::RedisResult<()> {
+
+    //　Redisへ接続
+    //let client = redis::Client::open(redis_url)?;
+    //let mut con = client.get_connection()?;
+
+    let conn = match connect_to_redis(redis_url) {
+        Ok(con) => {
+            println!("Successfully connected to Redis!");
+            // 接続を使用して操作を行う
+            Some(con)
+        },
+        Err(e) => {
+            let error_message = format!("{}", e);
+            println!("Failed to connect to Redis: {}", error_message);
+            None
+            // エラー処理を行う
+        }
+    };
+
+    match conn {
+        Some(mut con) => {
+            let mut pubsub = con.as_pubsub();
+            match  pubsub.subscribe(channel){
+                Ok(_) => {
+                    println!("subscribed channel: {}", channel);
+                },
+                Err(e) => {
+                    let error_message = format!("{}", e);
+                    println!("Failed to subscribe channel: {}", error_message);
+                }
+            }
+
+            loop {
+                let msg = pubsub.get_message()?;
+                let payload : String = msg.get_payload()?;
+                println!("channel '{}': {}", msg.get_channel_name(), payload);
+        
+                if payload == "exit" {
+                    break;
+                }
+            }
+        
+        },
+        None => {
+            println!("Failed to get Redis connection");
+        }
+    }
+
+    return Ok(());
 }
 
 #[cfg(test)]
@@ -141,8 +214,16 @@ mod tests {
         let state = pool.state();
         let count = state.connections;
 
+        let _= publish(&pool, "test_channel", "test_message").await;
+        let _= publish(&pool, "test_channel", "exit").await;
+
         // 結果を検証
         assert_eq!(count, 1);
+
+        // 結果を検証
+        let result = subscribe_channel("test_channel", &redis_url);
+
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
@@ -154,6 +235,22 @@ mod tests {
 
         assert!(result.is_err());
     }
+
+    //#[tokio::test]
+    async fn test_get_connection() {
+        dotenv().ok();
+        let redis_url = env::var("REDIS_URL").expect("REDIS_URL must be set in .env file");
+        let pool = create_pool(&redis_url).await.unwrap();
+
+        let _= publish(&pool, "test_channel", "test_message").await;
+        let _= publish(&pool, "test_channel", "exit").await;
+        // 結果を検証
+        let result = subscribe_channel("test_channel", &redis_url);
+
+        assert!(result.is_ok());
+    }
+
+
 }
 
 
