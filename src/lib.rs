@@ -34,6 +34,7 @@ pub enum MessageContent {
     Text(String),
     Sdp(Sdp),
     Ice(Ice),
+    Close(Close),  // Close is not protocol , use for closing connection
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -46,6 +47,11 @@ pub struct Sdp {
 pub struct Ice{
     pub r#type: String,
     pub candidate: Candidate,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Close{
+    pub r#type: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -62,6 +68,7 @@ impl std::fmt::Display for MessageContent {
             MessageContent::Text(text) => write!(f, "{}", text),
             MessageContent::Sdp(sdp) => write!(f, "Sdp(type: {}, sdp: {})", sdp.r#type, sdp.sdp),
             MessageContent::Ice(ice) => write!(f, "Ice(type: {}, candidate: {})", ice.r#type, ice.candidate.candidate),
+            MessageContent::Close(close) => write!(f, "Close(type: {})", close.r#type),
         }
     }
 }
