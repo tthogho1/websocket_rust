@@ -13,7 +13,7 @@ use axum::Json;
 use redis::{AsyncCommands, RedisError};
 use std::time::Duration;
 //use redis::aio::MultiplexedConnection;
-
+use tokio::time::sleep;
 
 
 pub struct AppState {
@@ -35,6 +35,7 @@ pub enum MessageContent {
     Sdp(Sdp),
     Ice(Ice),
     Close(Close),  // Close is not protocol , use for closing connection
+    User(User),
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -55,6 +56,19 @@ pub struct Close{
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct User{
+    pub r#type: String,
+    pub user_id: String,
+    pub location: Location,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Location {
+    pub lat: f64,
+    pub lng: f64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[allow(non_snake_case)]
 pub struct Candidate {
     pub candidate: String,
@@ -69,6 +83,8 @@ impl std::fmt::Display for MessageContent {
             MessageContent::Sdp(sdp) => write!(f, "Sdp(type: {}, sdp: {})", sdp.r#type, sdp.sdp),
             MessageContent::Ice(ice) => write!(f, "Ice(type: {}, candidate: {})", ice.r#type, ice.candidate.candidate),
             MessageContent::Close(close) => write!(f, "Close(type: {})", close.r#type),
+            MessageContent::User(user) => write!(f, "User(type: {}, user_id: {}, lat: {},lng: {})", user.r#type, user.user_id, user.location.lat,user.location.lng),
+            _ => write!(f, "Unknown message content"),
         }
     }
 }
@@ -101,14 +117,44 @@ pub fn get_app_state() -> &'static Arc<AppState> {
     APP_STATE.get().expect("AppState not initialized")
 }
 
+async fn ping_with_retries(pool: &bb8::Pool<RedisConnectionManager>, max_retries: u32) -> Result<String, redis::RedisError> {
+    for attempt in 1..=max_retries {
+        match pool.get().await {
+            Ok(mut conn) => {
+                match redis::cmd("PING").query_async(&mut *conn).await {
+                    Ok(pong) => return Ok(pong),
+                    Err(e) => eprintln!("Attempt {} failed: {}", attempt, e),
+                }
+            }
+            Err(e) => eprintln!("Attempt {} failed to get connection: {}", attempt, e),
+        }
+        
+        if attempt < max_retries {
+            print!("Attempt {} failed. Retrying in 2 seconds...", attempt);
+            sleep(Duration::from_secs(2)).await; // Wait before retrying
+        }
+    }
+
+    Err(redis::RedisError::from((
+        redis::ErrorKind::IoError,
+        "Exceeded max retry attempts",
+    )))
+}
+
 pub async fn create_pool(redis_url: &str) -> Result<bb8::Pool<RedisConnectionManager>, Box<dyn std::error::Error>> {
     let manager = RedisConnectionManager::new(redis_url)?;
     let pool = bb8::Pool::builder()
-        .connection_timeout(Duration::from_secs(60))
+        .connection_timeout(Duration::from_secs(10))
         .max_size(15)
         .build(manager)
-        .await?;
-    
+        .await
+        .map_err(|e| format!("Failed to create Redis connection pool: {}", e))?;
+
+    println!("Redis connection pool created successfully!");
+
+    let result = ping_with_retries(&pool, 10 ).await?;
+    println!("Redis ping result: {}", result);
+
     Ok(pool)
 }
 

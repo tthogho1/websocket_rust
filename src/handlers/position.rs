@@ -4,17 +4,17 @@ use axum::{
     response::IntoResponse,
     http::StatusCode,
 };
+//use bb8::State;
 use std::sync::Arc;
 use serde::{Deserialize, Serialize };
 use websocket_rust::AppState;
 use redis::geo::{ RadiusOptions, RadiusOrder, Unit, Coord };
 use redis::AsyncCommands;
+use websocket_rust::ChatMessage;
+use websocket_rust::User;
+use websocket_rust::Location;
+use websocket_rust::MessageContent;
 
-#[derive(Deserialize, Serialize)]
-pub struct Location {
-    lat: f64,
-    lng: f64,
-}
 
 #[derive(Deserialize, Serialize)]
 pub struct UserData {
@@ -26,6 +26,22 @@ pub struct UserData {
 pub struct PositionResponse {
     message: String,
 }
+
+
+fn send_userData_to_others(userData: &UserData, State(state): State<Arc<AppState>>) {
+    // Create user
+    let user_name = userData.name.clone();
+    let user_data = User { r#type: "user".to_string()
+                                , user_id: user_name.clone()    
+                                ,location: Location { lat: userData.location.lat, lng: userData.location.lng } };    
+    // ChatMessgae
+    let chat_message = ChatMessage { user_id: user_name.clone(), 
+                                                    to_id: "".to_string(),
+                                                    message:  MessageContent::User(user_data)};
+    // send user data to other users                                            
+    let _ = state.tx.send(chat_message);
+
+} 
 
 pub async fn position_handler(
     State(state): State<Arc<AppState>>,
@@ -43,10 +59,11 @@ pub async fn position_handler(
     ).await.unwrap();
 
     let result: Result<(), redis::RedisError> = con.set(&key_name, &json_string).await;
-
     match result {
         Ok(_) => {
             println!("Data stored successfully {}", key_name);
+            send_userData_to_others(&payload, State(state.clone()));
+
             return Json(PositionResponse { message: "OK".to_string() }).into_response();
         }
         Err(e) => {
