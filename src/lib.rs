@@ -36,6 +36,7 @@ pub enum MessageContent {
     Ice(Ice),
     Close(Close),  // Close is not protocol , use for closing connection
     User(User),
+    RMUser(RMUser),
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -57,6 +58,13 @@ pub struct Close{
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct User{
+    pub r#type: String,
+    pub user_id: String,
+    pub location: Location,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RMUser{
     pub r#type: String,
     pub user_id: String,
     pub location: Location,
