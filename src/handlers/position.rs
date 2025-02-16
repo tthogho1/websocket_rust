@@ -12,6 +12,7 @@ use redis::geo::{ RadiusOptions, RadiusOrder, Unit, Coord };
 use redis::AsyncCommands;
 use websocket_rust::ChatMessage;
 use websocket_rust::User;
+use websocket_rust::RMUser;
 use websocket_rust::Location;
 use websocket_rust::MessageContent;
 
@@ -194,6 +195,25 @@ pub async fn delete_user (
     let mut con = state.get_redis_conn().await.unwrap();
     
     println!("delete user {}", name);
+
+    // 削除するユーザーの情報を取得
+    let user_json_data: String = match con.get(&name).await {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("Redis get error for key {}: {:?}", name, e);
+            return Err(format!("Failed to get user data: {}", e));
+        }
+    };
+
+    // JSON文字列をUserDataにデシリアライズ
+    let user_data: UserData = match serde_json::from_str(&user_json_data) {
+        Ok(user_data) => user_data,
+        Err(e) => {
+            eprintln!("JSON parse error for key {}: {:?}", name, e);
+            return Err(format!("Failed to parse user data: {}", e));
+        }
+    };
+
     // ZREMコマンドの実行
     match con.zrem::<_, _, i32>("user_locations", &name).await {
         Ok(_) => println!("Successfully removed user location for: {}", name),
@@ -201,7 +221,7 @@ pub async fn delete_user (
             eprintln!("Failed to remove user location for {}: {}", name, e);
         }
     }
-
+    
     // DELコマンドの実行
     match con.del::<_, i32>(&name).await {
         Ok(_) => println!("Successfully deleted user data for: {}", name),
@@ -210,6 +230,17 @@ pub async fn delete_user (
             return Err(format!("Failed to delete user data: {}", e));
         }
     }
+
+    // Send Remove User Data to other users
+    let rm_user = RMUser { r#type: "rmuser".to_string()
+                                , user_id: name.clone()
+                                ,location: Location { lat: user_data.location.lat, lng: user_data.location.lng } };    
+    // ChatMessgae
+    let chat_message = ChatMessage { user_id: name.clone(), 
+                                                    to_id: "".to_string(),
+                                                    message:  MessageContent::RMUser(rm_user)};
+    // send user data to other users                                            
+    let _ = state.tx.send(chat_message);
 
     println!("User {} successfully deleted", name);
     Ok(())
