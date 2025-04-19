@@ -1,5 +1,6 @@
 mod view;
 mod handlers; 
+mod util;
 
 use view::render_template;
 use axum::{
@@ -18,6 +19,7 @@ use std::env;
 use websocket_rust::create_pool;
 use websocket_rust::init_app_state;
 use websocket_rust::get_app_state;
+use redis::Client;
 
 
 use crate::handlers::position::getallusers_handler;
@@ -40,7 +42,8 @@ async fn main() {
     let pool = create_pool(&redis_url).await.unwrap();
     let (tx, _rx) = broadcast::channel(100);
 
-    init_app_state(pool, tx);
+    let client = Arc::new(Client::open(redis_url).unwrap());  // Arc で包む
+    init_app_state(pool, tx, (*client).clone());
     let app_state = get_app_state();
 
     let app = Router::new()

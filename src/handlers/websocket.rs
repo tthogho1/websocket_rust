@@ -1,3 +1,6 @@
+//use crate::util::Lock; // クレートルートからの相対パス
+use crate::util::Lock::RedisLock;
+
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade}, Query, State
@@ -12,14 +15,15 @@ use std::env;
 
 use websocket_rust::AppState;
 use websocket_rust::ChatMessage;
-use websocket_rust::get_app_state;
+use websocket_rust::{get_app_state, MessageContent};
 
-use redis::{Client,AsyncCommands};
+use redis::{Client, AsyncCommands};
 use crate::handlers::position::delete_user;
 
 use std::time::Duration;
 use tokio::time::sleep; // 
 
+// Removed unused import as `lock` module does not exist
 
 #[derive(Deserialize)]
 pub struct WsParams {
@@ -46,7 +50,7 @@ pub async fn redis_listener() {
     let redis_url = env::var("REDIS_URL").unwrap().to_string();
     let state = Arc::clone(get_app_state());
 
-    let client = Client::open(redis_url).unwrap();
+    let client = Arc::new(Client::open(redis_url).unwrap());
     let mut con = connect_with_retry(&client, 10).unwrap();
     let mut pubsub = con.as_pubsub();
     pubsub.subscribe("my_channel").unwrap();
@@ -123,13 +127,45 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, name: String) {
         }
     });
 
+    let redis_client = Arc::new(state.redis_client.clone());
     // クライアントからのメッセージを処理するタスク
     let mut recv_task = tokio::spawn(async move {
+
         while let Some(Ok(Message::Text(jsontext))) = receiver.next().await {
             // 受信したメッセージをブロードキャスト
             println!("{}: {}", user_id.clone(), jsontext);
+            
             let chat_message: ChatMessage = serde_json::from_str(&jsontext).unwrap();
+            let  message = chat_message.message.clone();
+            // 
+            match message {
+                MessageContent::Notice(notice) => {
+                    println!("Notice type: {}", notice.r#type);
+                    if (notice.r#type == "openVchat") {
+                        let lock_key = format!("vchat:user:{}", user_id.clone());
+                        // 各タスクで新しい RedisLock インスタンスを作成 (同じ Redis クライアントとロックキーを使用)
+                        let redis_lock = RedisLock::new(&redis_client, &lock_key);
+                        
+                        match redis_lock.lock(10) {
+                            Ok(acquired) => {
+                                if acquired {
+                                    println!("Lock acquired by thread {} for user: {}", tokio::task::id(), user_id.clone());
+                                    // ロック保護された処理
+                                    // ...
+                                } else {
+                                    println!("Failed to acquire lock by thread {} for user: {}", tokio::task::id(), user_id.clone());
+                                }
+                            }
+                            Err(e) => eprintln!("Error acquiring lock by thread {}: {}", tokio::task::id(), e),
+                        }
+                        // lock and set user
 
+                    }
+                }
+                _ => { // do nothinng
+                }
+            }
+            //let get_type = get_message_type(&chat_message);
             // let mut con = pool.get().await.unwrap(); 
             // let json_string = serde_json::to_string(&chat_message).unwrap();    
             // let json_string_clone = json_string.clone();

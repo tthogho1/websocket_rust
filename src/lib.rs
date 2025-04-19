@@ -19,6 +19,7 @@ use tokio::time::sleep;
 pub struct AppState {
     pub pool: bb8::Pool<RedisConnectionManager>,
     pub tx: broadcast::Sender<ChatMessage>,
+    pub redis_client: redis::Client,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -34,9 +35,20 @@ pub enum MessageContent {
     Text(String),
     Sdp(Sdp),
     Ice(Ice),
-    Close(Close),  // Close is not protocol , use for closing connection
+    Notice(Notice),  // notice is not protocol , use for closing or order
     User(User),
     RMUser(RMUser),
+}
+
+pub fn get_message_type(chat_message: &ChatMessage) -> &'static str {
+    match &chat_message.message {
+        MessageContent::Text(_) => "Text",
+        MessageContent::Sdp(_) => "Sdp",
+        MessageContent::Ice(_) => "Ice",
+        MessageContent::Notice(_) => "Notice",
+        MessageContent::User(_) => "User",
+        MessageContent::RMUser(_) => "RMUser",
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -52,7 +64,7 @@ pub struct Ice{
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct Close{
+pub struct Notice{
     pub r#type: String,
 }
 
@@ -90,7 +102,7 @@ impl std::fmt::Display for MessageContent {
             MessageContent::Text(text) => write!(f, "{}", text),
             MessageContent::Sdp(sdp) => write!(f, "Sdp(type: {}, sdp: {})", sdp.r#type, sdp.sdp),
             MessageContent::Ice(ice) => write!(f, "Ice(type: {}, candidate: {})", ice.r#type, ice.candidate.candidate),
-            MessageContent::Close(close) => write!(f, "Close(type: {})", close.r#type),
+            MessageContent::Notice(notice) => write!(f, "Notice(type: {})", notice.r#type),
             MessageContent::User(user) => write!(f, "User(type: {}, user_id: {}, lat: {},lng: {})", user.r#type, user.user_id, user.location.lat,user.location.lng),
             _ => write!(f, "Unknown message content"),
         }
@@ -117,8 +129,8 @@ impl AppState {
 
 static APP_STATE: OnceCell<Arc<AppState>> = OnceCell::new();
 
-pub fn init_app_state(pool: bb8::Pool<RedisConnectionManager>, tx: Sender<ChatMessage>) {
-    let _ = APP_STATE.set(Arc::new(AppState { pool, tx  }));
+pub fn init_app_state(pool: bb8::Pool<RedisConnectionManager>, tx: Sender<ChatMessage>, redis_client: redis::Client) {
+    let _ = APP_STATE.set(Arc::new(AppState { pool, tx ,redis_client }));
 }
 
 pub fn get_app_state() -> &'static Arc<AppState> {
@@ -176,13 +188,11 @@ async fn publish(pool: &bb8::Pool<RedisConnectionManager>, channel: &str, messag
     conn.publish(channel, message).await
 }
 
-
 fn connect_to_redis(redis_url: &str) -> Result<redis::Connection, RedisError> {
     let client = redis::Client::open(redis_url)?;
     let con = client.get_connection()?;
     Ok(con)
 }
-
 
 fn subscribe_channel(channel: &str,redis_url: &str) -> redis::RedisResult<()> {
 
