@@ -80,6 +80,8 @@ impl Drop for RedisLock {
         if let Err(e) = self.unlock() {
             // output error to console 
             eprintln!("Failed to unlock Redis key {}: {}", self.lock_key, e);
+        }else{
+            println!("Successfully unlocked Redis key {}", self.lock_key);
         }
     }
 }

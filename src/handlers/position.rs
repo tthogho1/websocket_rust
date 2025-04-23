@@ -8,7 +8,7 @@ use axum::{
 use std::sync::Arc;
 use serde::{Deserialize, Serialize };
 use websocket_rust::AppState;
-use redis::geo::{ RadiusOptions, RadiusOrder, Unit, Coord };
+use redis::geo::{ RadiusOptions, RadiusOrder, Unit, Coord,RadiusSearchResult };
 use redis::AsyncCommands;
 use websocket_rust::ChatMessage;
 use websocket_rust::User;
@@ -20,7 +20,8 @@ use websocket_rust::MessageContent;
 #[derive(Deserialize, Serialize)]
 pub struct UserData {
     name: String,
-    location: Location
+    location: Location,
+    connecting_user: String
 }
 
 #[derive(Serialize)]
@@ -150,9 +151,9 @@ pub async fn get_users_in_bounds(
 ) ->  impl IntoResponse  {
     let mut con = state.get_redis_conn().await.unwrap();
 
-    let opts = RadiusOptions::default().order(RadiusOrder::Asc).limit(200);
-    // 範囲内のユーザー名を取得
-    let user_names: Vec<String> = con.geo_radius(
+    let opts = RadiusOptions::default().with_coord().order(RadiusOrder::Asc).limit(200);
+    // get name ,lat, lng
+    let user_infos: Vec<RadiusSearchResult> = con.geo_radius(
         "user_locations",
         payload.location.lng,
         payload.location.lat,
@@ -161,23 +162,35 @@ pub async fn get_users_in_bounds(
         opts
     ).await.unwrap();
 
+
+
     // ユーザーデータを取得
     let mut users = Vec::new();
 
-    for key in user_names {
-        let value: String = match con.get(&key).await {
+    for user_info in user_infos {
+        let value: String = match con.get(&user_info.name).await {
             Ok(v) => v,
             Err(e) => {
-                eprintln!("Redis get error for key {}: {:?}", key, e);
+                eprintln!("Redis get error for key {}: {:?}", &user_info.name, e);
                 continue; 
             }
         };
 
         // JSON文字列をUserDataにデシリアライズ
         match serde_json::from_str::<UserData>(&value) {
-            Ok(user_data) => users.push(user_data),
+            Ok(mut user_data) => {
+                if let Some(coord) = user_info.coord {
+                    user_data.location.lat = coord.latitude;
+                    user_data.location.lng = coord.longitude;
+                } else {
+                    eprintln!("Missing coordinates for user {}", user_info.name);
+                    continue;
+                }
+
+                users.push(user_data)
+            },
             Err(e) => {
-                eprintln!("JSON parse error for key {}: {:?}", key, e);
+                eprintln!("JSON parse error for key {}: {:?}", &user_info.name, e);
                 continue; 
             }
         }

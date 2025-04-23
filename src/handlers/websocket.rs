@@ -92,6 +92,7 @@ pub async fn ws_handler(
     ws.on_upgrade(|socket| handle_socket(socket, state, params.name))
 }
 
+
 async fn handle_socket(socket: WebSocket, state: Arc<AppState>, name: String) {
     let (mut sender, mut receiver) = socket.split();
 
@@ -141,7 +142,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, name: String) {
             match message {
                 MessageContent::Notice(notice) => {
                     println!("Notice type: {}", notice.r#type);
-                    if (notice.r#type == "openVchat") {
+                    if notice.r#type == "OpenVideo" {
                         let lock_key = format!("vchat:user:{}", user_id.clone());
                         // 各タスクで新しい RedisLock インスタンスを作成 (同じ Redis クライアントとロックキーを使用)
                         let redis_lock = RedisLock::new(&redis_client, &lock_key);
@@ -151,7 +152,8 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, name: String) {
                                 if acquired {
                                     println!("Lock acquired by thread {} for user: {}", tokio::task::id(), user_id.clone());
                                     // ロック保護された処理
-                                    // ...
+                                    // 
+
                                 } else {
                                     println!("Failed to acquire lock by thread {} for user: {}", tokio::task::id(), user_id.clone());
                                 }
