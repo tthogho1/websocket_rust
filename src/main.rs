@@ -30,7 +30,10 @@ use crate::handlers::websocket::redis_listener;
 
 
 // アプリケーションの状態
-#[tokio::main]
+#[tokio::main(
+flavor = "multi_thread",
+worker_threads = 40 // 論理コア数×2
+)]
 async fn main() {
     dotenv().ok();
 
@@ -40,11 +43,13 @@ async fn main() {
     let ws_server = env::var("WS_SERVER").unwrap().to_string();
 
     let pool = create_pool(&redis_url).await.unwrap();
-    let (tx, _rx) = broadcast::channel(100);
+    // let (tx, _rx) = broadcast::channel(100);
+    let tx = broadcast::channel(100).0; // 受信側を破棄
 
     let client = Arc::new(Client::open(redis_url).unwrap());  // Arc で包む
     init_app_state(pool, tx, (*client).clone());
     let app_state = get_app_state();
+    println!("Number of subscribers in main: {}", app_state.tx.receiver_count());
 
     let app = Router::new()
         .route("/ws", get(ws_handler))
@@ -65,12 +70,18 @@ async fn main() {
             },
         ));
 
-    //tokio::spawn(async {
-    //    redis_listener().await;
-    //});    
+    println!("start redis Listener...");
+    tokio::spawn(async {
+        if let Err(e) = redis_listener().await {
+            eprintln!("redis_listener task finished with error: {:?}", e);
+        } else {
+            println!("redis_listener task finished successfully (unexpectedly)");
+        }
+    });    
     // サーバーを起動
     let addr= SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+    println!("Listening on {}", addr);
     axum::serve(listener, app).await.unwrap();
 
 }

@@ -17,11 +17,13 @@ use websocket_rust::AppState;
 use websocket_rust::ChatMessage;
 use websocket_rust::{get_app_state, MessageContent};
 
-use redis::{Client, AsyncCommands};
+use redis::{Client, AsyncCommands, RedisError};
 use crate::handlers::position::delete_user;
 
 use std::time::Duration;
 use tokio::time::sleep; // 
+use std::time::Instant;
+//use metrics::increment_counter;
 
 // Removed unused import as `lock` module does not exist
 
@@ -37,7 +39,7 @@ fn connect_with_retry(client: &redis::Client, max_retries: u32) -> redis::RedisR
             Err(e) => {
                 eprintln!("attempt {} faile: {}", attempt, e);
                 if attempt < max_retries {
-                    let _ = sleep(Duration::from_secs(5));
+                    let _ = sleep(Duration::from_secs(10));
                 }
             }
         }
@@ -46,40 +48,31 @@ fn connect_with_retry(client: &redis::Client, max_retries: u32) -> redis::RedisR
 }
 
 
-pub async fn redis_listener() {
-    let redis_url = env::var("REDIS_URL").unwrap().to_string();
-    let state = Arc::clone(get_app_state());
+pub async fn redis_listener() -> Result<(), RedisError> {
+    let redis_url = env::var("REDIS_URL").map_err(|e| RedisError::from((redis::ErrorKind::IoError, "Environment variable error")))?;
+    let state = Arc::clone(&get_app_state());
+    
+    let client = Client::open(redis_url)?;
+    let mut con = connect_with_retry(&client, 5);
+    
+    let mut pubsub = con.as_mut().unwrap().as_pubsub();
+    pubsub.subscribe("my_channel");
 
-    let client = Arc::new(Client::open(redis_url).unwrap());
-    let mut con = connect_with_retry(&client, 10).unwrap();
-    let mut pubsub = con.as_pubsub();
-    pubsub.subscribe("my_channel").unwrap();
+    println!("'my_channel' subscribed to my_channel");
 
-    println!("Listening for messages on channel 'my_channel'");
-    loop {
-        match pubsub.get_message() {
-            Ok(msg) => {
-                if let Ok(payload) = msg.get_payload::<String>() {
-                    println!("get message from channel '{}': {}", msg.get_channel_name(), payload);
-
-                    match serde_json::from_str::<ChatMessage>(&payload) {
-                        Ok(chat_message) => {
-                            println!("send message to tx.send {}", payload);
-                            if let Err(e) = state.tx.send(chat_message) {
-                                eprintln!("Failed to send message: {}", e);
-                            }
-                        },
-                        Err(e) => eprintln!("Failed to parse message: {}", e),
-                    }
-                }
-            },
-            Err(e) => {
-                eprintln!("Failed to get message from channel: {}", e);
-                // wait to retry
-                let _ = tokio::time::sleep(Duration::from_secs(3)).await;
-            },
+     // メッセージを受信して処理する
+    
+    while let Ok(msg) = pubsub.get_message() {
+        let payload: String = msg.get_payload()?;
+        let chat_message = serde_json::from_str(&payload)
+            .map_err(|e| RedisError::from((redis::ErrorKind::TypeError, "Parse error", format!("{}", e))))?;
+        
+        if let Err(e) = state.tx.send(chat_message) {
+            return Err(RedisError::from((redis::ErrorKind::IoError, "Channel error", format!("{}", e))));
         }
     }
+
+    Ok(())
 }
 
 pub async fn ws_handler(
@@ -92,39 +85,77 @@ pub async fn ws_handler(
     ws.on_upgrade(|socket| handle_socket(socket, state, params.name))
 }
 
+async fn process_message(
+    msg: ChatMessage,
+    sender: Arc<tokio::sync::Mutex<futures::stream::SplitSink<WebSocket, Message>>> ,
+    user_id: String,
+) -> Result<(), Box<dyn std::error::Error>> {
+
+    // 宛先チェック
+    if !msg.to_id.is_empty() && msg.to_id != user_id {
+        return Ok(()); // 対象外メッセージは無視
+    }
+
+    // JSONシリアライズ
+    let json_string = serde_json::to_string(&msg)?;
+
+    // WebSocket送信
+    let lock_start = Instant::now();
+    println!("Task {}: Attempting to acquire sender lock", user_id);
+    let mut sender_guard = sender.lock().await;
+    let lock_duration = lock_start.elapsed();
+    println!("Task {}: Acquired sender lock in {:?}", user_id, lock_duration);
+
+    let send_start = Instant::now();
+    let send_result = sender_guard.send(Message::Text(json_string.clone())).await;
+    let send_duration = send_start.elapsed();
+    
+    match send_result {
+        Ok(_) => {
+            println!("Task {}: Successfully sent message - {} in {:?}", user_id, &json_string, send_duration);
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("Task {}: Failed to send message - {} due to: {:?}", user_id, &json_string, e);
+            Err(Box::new(e))
+        }
+    }
+}
 
 async fn handle_socket(socket: WebSocket, state: Arc<AppState>, name: String) {
-    let (mut sender, mut receiver) = socket.split();
+    let (sender, mut receiver) = socket.split();
+    let sender = Arc::new(tokio::sync::Mutex::new(sender));
 
     let user_id = name;
     let user_id_clone = user_id.clone();
     let delete_id = user_id.clone();
     let app_state = Arc::clone(get_app_state());
     
-    let pool = app_state.pool.clone();
+    let _pool = app_state.pool.clone();
     
     // ブロードキャストチャンネルの受信機を取得
+    println!("WebSocket connection established: {}", user_id);
     let mut rx = state.tx.subscribe();
+    println!("Number of subscribers in receiver: {}", state.tx.receiver_count());
+
 
     let mut send_task = tokio::spawn(async move {
-        while let Ok(msg) = rx.recv().await {
-            println!("receive from rx {}", msg.message);
+        let rx_addr = format!("{:p}", &rx);
+        println!("send_task started with receiver address: {}", rx_addr);
 
-            if !msg.to_id.is_empty(){ 
-                if msg.to_id == user_id_clone {
-                    println!("{}: {}", msg.user_id, msg.message);
-                    let json_string = serde_json::to_string(&msg).unwrap();
-                    let _ = sender
-                            .send(Message::Text(json_string))
-                            .await;                        
+        while let Ok(msg) = rx.recv().await {
+            let sender_clone: Arc<tokio::sync::Mutex<futures::stream::SplitSink<WebSocket, Message>>> = Arc::clone(&sender);
+            let user_id = user_id_clone.clone();
+            println!("receive id : {}", &user_id);
+          //  tokio::spawn(async move {
+                // メッセージ処理ロジックの分離
+                match process_message(msg, sender_clone, user_id).await {
+                    Ok(_) => println!("Message processed successfully"),
+                    Err(e) => {
+                        println!("Message processing failed: {}", e);
+                    }
                 }
-            }else{
-                let json_string = serde_json::to_string(&msg).unwrap();
-                println!(" send to {}: {}", msg.user_id, msg.message);
-                let _ = sender
-                .send(Message::Text(json_string))
-                .await; 
-            } 
+            //});
         }
     });
 
@@ -134,7 +165,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, name: String) {
 
         while let Some(Ok(Message::Text(jsontext))) = receiver.next().await {
             // 受信したメッセージをブロードキャスト
-            println!("{}: {}", user_id.clone(), jsontext);
+            println!("recive message : {}: {}", user_id.clone(), jsontext);
             
             let chat_message: ChatMessage = serde_json::from_str(&jsontext).unwrap();
             let  message = chat_message.message.clone();
@@ -168,13 +199,14 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, name: String) {
                 }
             }
             //let get_type = get_message_type(&chat_message);
-            // let mut con = pool.get().await.unwrap(); 
-            // let json_string = serde_json::to_string(&chat_message).unwrap();    
-            // let json_string_clone = json_string.clone();
+            let mut con = _pool.get().await.unwrap(); 
+            let json_string = serde_json::to_string(&chat_message).unwrap();    
+            let json_string_clone = json_string.clone();
 
-            // let _: () = con.publish("my_channel", json_string).await.unwrap();
-            // println!("publish message to redis {}", json_string_clone);
-            let _ = state.tx.send(chat_message).unwrap();
+            let _: () = con.publish("my_channel", json_string).await.unwrap();
+            println!("publish message to redis {}", json_string_clone);
+            // original
+            // let _ = state.tx.send(chat_message).unwrap();
         }
     });
 
