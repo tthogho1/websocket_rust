@@ -23,6 +23,7 @@ use crate::handlers::position::delete_user;
 use std::time::Duration;
 use tokio::time::sleep; // 
 use std::time::Instant;
+use tokio::runtime::Runtime;
 //use metrics::increment_counter;
 
 // Removed unused import as `lock` module does not exist
@@ -51,26 +52,44 @@ fn connect_with_retry(client: &redis::Client, max_retries: u32) -> redis::RedisR
 pub async fn redis_listener() -> Result<(), RedisError> {
     let redis_url = env::var("REDIS_URL").map_err(|e| RedisError::from((redis::ErrorKind::IoError, "Environment variable error")))?;
     let state = Arc::clone(&get_app_state());
-    
-    let client = Client::open(redis_url)?;
-    let mut con = connect_with_retry(&client, 5);
-    
-    let mut pubsub = con.as_mut().unwrap().as_pubsub();
-    pubsub.subscribe("my_channel");
+    let client = redis::Client::open(redis_url)?;
+    let con = connect_with_retry(&client, 5)?;
+    let state_tx_clone = state.tx.clone(); // Sender のクローンを move するクロージャへ移動
 
-    println!("'my_channel' subscribed to my_channel");
-
-     // メッセージを受信して処理する
-    
-    while let Ok(msg) = pubsub.get_message() {
-        let payload: String = msg.get_payload()?;
-        let chat_message = serde_json::from_str(&payload)
-            .map_err(|e| RedisError::from((redis::ErrorKind::TypeError, "Parse error", format!("{}", e))))?;
-        
-        if let Err(e) = state.tx.send(chat_message) {
-            return Err(RedisError::from((redis::ErrorKind::IoError, "Channel error", format!("{}", e))));
+    tokio::task::spawn_blocking(move || {
+        let mut con = con; // move された con をシャドーイング
+        let mut pubsub = con.as_pubsub();
+        if let Err(e) = pubsub.subscribe("my_channel") {
+            eprintln!("Failed to subscribe to Redis channel: {}", e);
+            return Err(e.into()); // redis::RedisError -> crate::RedisError
         }
-    }
+
+        println!("'my_channel' subscribed to my_channel");
+
+        while let Ok(msg) = pubsub.get_message() {
+            match msg.get_payload::<String>() {
+                Ok(payload) => {
+                    match serde_json::from_str::<ChatMessage>(&payload) {
+                        Ok(chat_message) => {
+                            // Avoid attempting a blocking send in spawn_blocking
+                            // Perform asynchronous sends with block_on
+                            let rt = Runtime::new().unwrap();
+                            rt.block_on(async {
+                                if let Err(e) = state_tx_clone.send(chat_message) {
+                                    eprintln!("Failed to send message to broadcast channel: {}", e);
+                                } else {
+                                    println!("put channel message: {}", payload);
+                                }
+                            });
+                        }
+                        Err(e) => eprintln!("Failed to parse message: {}", e),
+                    }
+                }
+                Err(e) => eprintln!("Failed to get payload: {}", e),
+            }
+        }
+        Ok::<(), RedisError>(())
+    });
 
     Ok(())
 }
