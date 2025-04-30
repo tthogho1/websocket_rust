@@ -65,7 +65,7 @@ pub async fn redis_listener() -> Result<(), RedisError> {
         }
 
         println!("'my_channel' subscribed to my_channel");
-
+        let rt = Runtime::new().unwrap();
         while let Ok(msg) = pubsub.get_message() {
             match msg.get_payload::<String>() {
                 Ok(payload) => {
@@ -73,7 +73,6 @@ pub async fn redis_listener() -> Result<(), RedisError> {
                         Ok(chat_message) => {
                             // Avoid attempting a blocking send in spawn_blocking
                             // Perform asynchronous sends with block_on
-                            let rt = Runtime::new().unwrap();
                             rt.block_on(async {
                                 if let Err(e) = state_tx_clone.send(chat_message) {
                                     eprintln!("Failed to send message to broadcast channel: {}", e);
